@@ -5,55 +5,52 @@ export default async function handler(req, res) {
 
     try {
         const userMessage = req.body?.userRequest?.utterance || "안녕하세요";
-        const callbackUrl = req.body?.userRequest?.callbackUrl; // 카카오가 준 1회용 콜백 주소
         const apiKey = process.env.GEMINI_API_KEY;
 
-        // 1. 카카오에 "잠시만 기다려 주세요" 응답을 즉시 반환 (5초 타임아웃 방지)
-        res.status(200).json({
-            version: "2.0",
-            useCallback: true // 이 값을 true로 보내면 카카오가 기다려줍니다.
+        if (!apiKey) throw new Error("API Key가 없습니다.");
+
+        // 구글 최신 모델(gemini-2.5-flash) 호출
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: [{ parts: [{ text: userMessage }] }],
+                systemInstruction: { parts: [{ text: "당신은 부안군의 AI 비서 '부안척척'입니다. 친절하게 답하세요." }] }
+            })
         });
 
-        // 2. 백그라운드에서 AI 호출 및 재시도 로직 실행
-        let aiText = "죄송합니다. 지금은 대답을 생성하지 못했습니다.";
-        for (let attempt = 1; attempt <= 3; attempt++) {
-            try {
-                const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
-                    body: JSON.stringify({
-                        contents: [{ parts: [{ text: userMessage }] }],
-                        systemInstruction: { parts: [{ text: "당신은 부안군의 AI 비서 '부안척척'입니다." }] }
-                    })
-                });
-                const data = await response.json();
+        const data = await response.json();
+        let aiText = "죄송합니다. 현재 AI 서버에 접속자가 많아 잠시 후 다시 시도해 주세요.";
 
-                if (data.candidates && data.candidates.length > 0) {
-                    aiText = data.candidates[0].content.parts[0].text;
-                    break; // 성공 시 반복문 종료
-                }
-                if (data.error && data.error.message.includes("high demand")) {
-                    await new Promise(r => setTimeout(r, 1000)); // 1초 대기 후 재시도
-                    continue;
-                }
-                if (data.error) { aiText = `구글 에러: ${data.error.message}`; break; }
-            } catch (e) { await new Promise(r => setTimeout(r, 1000)); }
+        // 정상적으로 답변을 받은 경우
+        if (data.candidates && data.candidates[0]?.content?.parts[0]?.text) {
+            aiText = data.candidates[0].content.parts[0].text;
+        } 
+        // 구글 API 에러(과부하 등) 발생 시
+        else if (data.error) {
+            console.error("구글 에러 상세:", data.error);
+            // 만약 'high demand' 에러가 나면 사용자에게 안내 메시지 전달
+            if (data.error.message.includes("high demand")) {
+                aiText = "지금 이용자가 많아 대답이 늦어지고 있어요. 잠시 후 다시 말씀해 주시겠어요?";
+            } else {
+                aiText = `구글 에러: ${data.error.message}`;
+            }
         }
 
-        // 3. 준비된 답변을 카카오 콜백 주소로 전송
-        if (callbackUrl) {
-            await fetch(callbackUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    version: "2.0",
-                    template: { outputs: [{ simpleText: { text: aiText } }] }
-                })
-            });
-        }
+        res.status(200).json({
+            version: "2.0",
+            template: {
+                outputs: [{ simpleText: { text: aiText } }]
+            }
+        });
+
     } catch (error) {
         console.error("서버 에러:", error);
-        // 예외 발생 시에도 카카오가 멈추지 않도록 에러 응답이라도 반환
-        res.status(200).json({ version: "2.0", template: { outputs: [{ simpleText: { text: "시스템 오류가 발생했습니다." } }] } });
+        res.status(200).json({
+            version: "2.0",
+            template: {
+                outputs: [{ simpleText: { text: "서버 통신 중 에러가 발생했습니다." } }]
+            }
+        });
     }
 }
