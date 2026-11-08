@@ -14,13 +14,14 @@ export default async function handler(req, res) {
         const callbackUrl = req.body?.userRequest?.callbackUrl;
         const apiKey = process.env.GEMINI_API_KEY;
 
-        if (!apiKey) throw new Error("GEMINI_API_KEY is missing");
-
+        // 1. 카카오에 "잠시만 기다려 주세요" 즉시 반환
         res.status(200).json({ version: "2.0", useCallback: true });
 
+        // 2. 백그라운드 작업 (AI 호출 및 콜백 전송)
         const processAI = async () => {
-            let aiText = "죄송합니다. 현재 AI 서버에 접속자가 많아 잠시 후 다시 시도해 주세요.";
+            let aiText = "죄송합니다. 답변을 가져오지 못했습니다.";
             try {
+                // ★ 에러 메시지에서 요구한 최신 모델(gemini-3.8-flash) 적용
                 const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -31,7 +32,7 @@ export default async function handler(req, res) {
                 });
 
                 const data = await response.json();
-
+                
                 if (data.candidates?.[0]?.content?.parts?.[0]?.text) {
                     aiText = data.candidates[0].content.parts[0].text;
                 } else if (data.error) {
@@ -39,8 +40,10 @@ export default async function handler(req, res) {
                 }
             } catch (err) {
                 console.error("AI 처리 중 에러:", err);
+                aiText = "서버 통신 오류가 발생했습니다.";
             }
 
+            // 3. 준비된 답변을 카카오 콜백 주소로 전송 (에러가 나도 무조건 전송 시도)
             if (callbackUrl) {
                 await fetch(callbackUrl, {
                     method: 'POST',
@@ -53,6 +56,7 @@ export default async function handler(req, res) {
             }
         };
 
+        // 3. 백그라운드 작업 실행
         waitUntil(processAI());
 
     } catch (error) {
