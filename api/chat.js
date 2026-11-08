@@ -23,34 +23,36 @@ export default async function handler(req, res) {
             let databaseContext = "";
 
             try {
-                // 1. Firebase에서 부안 인벤토리 데이터 불러오기
-                const firebaseProjectId = "buan-chuckchuck"; // 본인 프로젝트 ID 확인
-                const firebaseUrl = `https://firestore.googleapis.com/v1/projects/${firebaseProjectId}/databases/(default)/documents/inventory`;
+                // 1. Firebase 데이터 불러오기 (★ pageSize=1000 추가)
+                const firebaseProjectId = "buan-chuckchuck"; 
+                const firebaseUrl = `https://firestore.googleapis.com/v1/projects/${firebaseProjectId}/databases/(default)/documents/inventory?pageSize=1000`;
                 const fbResponse = await fetch(firebaseUrl);
                 const fbData = await fbResponse.json();
 
-                // 2. 사용자의 질문과 관련된 데이터만 필터링
+                // 2. 사용자의 질문과 관련된 데이터 필터링
                 if (fbData.documents && fbData.documents.length > 0) {
                     const matchedDocs = fbData.documents.filter(doc => {
                         const fields = doc.fields;
+                        // 검색할 텍스트 합치기 (대분류, 중분류, 소분류, 서비스내용, 키워드)
                         const searchString = 
+                            (fields.대분류?.stringValue || "") + " " +
+                            (fields.중분류?.stringValue || "") + " " +
                             (fields.소분류?.stringValue || "") + " " +
                             (fields.서비스내용?.stringValue || "") + " " +
-                            (fields.키워드?.stringValue || "") + " " +
-                            (fields.대분류?.stringValue || "");
+                            (fields.키워드?.stringValue || "");
                         
+                        // 사용자가 입력한 단어가 검색 텍스트에 포함되어 있는지 확인
                         return userMessage.split(" ").some(word => word.length > 1 && searchString.includes(word));
                     });
 
-                    // 매칭된 데이터가 있으면 프롬프트에 넣을 텍스트로 변환 (최대 10개로 늘려서 더 많은 정보 제공)
+                    // 매칭된 데이터가 있으면 프롬프트에 넣을 텍스트로 변환 (최대 10개)
                     databaseContext = matchedDocs.slice(0, 10).map(doc => {
                         const f = doc.fields;
                         return `[부안 정보] 
-                        분류: ${f.대분류?.stringValue} > ${f.중분류?.stringValue} > ${f.소분류?.stringValue}
-                        내용: ${f.서비스내용?.stringValue}
-                        기관: ${f.연계기관?.stringValue}
-                        전화번호: ${f.전화번호?.stringValue}
-                        주소: ${f.주소?.stringValue}`;
+                        이름: ${f.소분류?.stringValue}
+                        분류: ${f.대분류?.stringValue} > ${f.중분류?.stringValue}
+                        전화번호: ${f.전화번호?.stringValue || "번호 없음"}
+                        주소: ${f.주소?.stringValue || "주소 없음"}`;
                     }).join("\n\n");
                 }
             } catch (e) {
@@ -64,9 +66,9 @@ export default async function handler(req, res) {
                 다음은 사용자의 질문과 관련하여 부안군 데이터베이스에서 찾아낸 정보입니다. 이 정보를 바탕으로 대답하세요.
                 
                 ★★★ 절대 규칙 (반드시 지킬 것):
-                1. 제공된 [검색된 부안 데이터]에 없는 구체적인 전화번호, 주소, 사람 이름은 절대로 지어내지 마세요. (가짜 번호 생성 금지)
-                2. 만약 [검색된 부안 데이터]에 사용자의 질문에 대한 답이 없거나 부족하다면, 당신의 일반 지식으로 대답하되 "정확한 부안 지역의 정보는 데이터베이스에 없습니다. 부안군청(063-580-4000)으로 문의하시면 정확한 안내를 받으실 수 있습니다." 라고 덧붙여서 솔직하게 안내하세요.
-                3. 데이터에 있는 정보만을 사용하여 확실하게 안내하세요.
+                1. 제공된 [검색된 부안 데이터]에 없는 구체적인 전화번호, 주소는 절대로 지어내지 마세요.
+                2. [검색된 부안 데이터]에 정보가 있다면, 그 정보를 바탕으로 아주 친절하게 안내하세요. (전화번호와 주소를 꼭 포함할 것)
+                3. 만약 데이터에 없는 내용이라면 "죄송합니다. 해당 정보는 현재 데이터베이스에 없습니다. 부안군청(063-580-4000)으로 문의하시면 정확한 안내를 받으실 수 있습니다." 라고 솔직하게 대답하세요.
 
                 [검색된 부안 데이터]
                 ${databaseContext || "검색된 데이터가 없습니다."}`;
@@ -83,14 +85,13 @@ export default async function handler(req, res) {
                             { role: "system", content: systemPrompt },
                             { role: "user", content: userMessage }
                         ],
-                        temperature: 0.1 // ★ 온도를 0.1로 낮춰서 AI가 최대한 사실만 말하게 함
+                        temperature: 0.1 
                     })
                 });
 
                 const data = await response.json();
 
                 if (data.choices?.[0]?.message?.content) {
-                    // ★ AI 답변에서 마크다운 기호(**, ###, ---, |)를 강제로 제거하는 필터
                     let rawText = data.choices[0].message.content;
                     aiText = rawText.replace(/\*\*/g, '').replace(/###/g, '').replace(/---/g, '').replace(/\|/g, '');
                 } else if (data.error) {
@@ -101,7 +102,7 @@ export default async function handler(req, res) {
                 aiText = "서버 통신 오류가 발생했습니다.";
             }
 
-            // 4. 카카오톡 '카드형(TextCard)' UI로 전송
+            // 4. 카카오톡 카드형 UI 전송
             if (callbackUrl) {
                 const safeDescription = aiText.substring(0, 800); 
 
