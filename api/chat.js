@@ -9,8 +9,8 @@ export default async function handler(req, res) {
 
         if (!apiKey) throw new Error("API Key가 없습니다.");
 
-        // 구글 최신 모델(gemini-2.5-flash) 호출
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+        // ★ 신규 사용자도 사용 가능한 최신 모델(gemini-3.8-flash) 적용
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -26,15 +26,10 @@ export default async function handler(req, res) {
         if (data.candidates && data.candidates[0]?.content?.parts[0]?.text) {
             aiText = data.candidates[0].content.parts[0].text;
         } 
-        // 구글 API 에러(과부하 등) 발생 시
+        // 구글 API 에러 발생 시
         else if (data.error) {
             console.error("구글 에러 상세:", data.error);
-            // 만약 'high demand' 에러가 나면 사용자에게 안내 메시지 전달
-            if (data.error.message.includes("high demand")) {
-                aiText = "지금 이용자가 많아 대답이 늦어지고 있어요. 잠시 후 다시 말씀해 주시겠어요?";
-            } else {
-                aiText = `구글 에러: ${data.error.message}`;
-            }
+            aiText = `구글 에러: ${data.error.message}`;
         }
 
         res.status(200).json({
