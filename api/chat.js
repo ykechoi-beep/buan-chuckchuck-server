@@ -4,72 +4,56 @@ export default async function handler(req, res) {
     }
 
     try {
-        const userMessage = req.body?.userRequest?.utterance || req.body?.userRequest?.params?.utterance || "안녕하세요";
+        const userMessage = req.body?.userRequest?.utterance || "안녕하세요";
+        const callbackUrl = req.body?.userRequest?.callbackUrl; // 카카오가 준 1회용 콜백 주소
         const apiKey = process.env.GEMINI_API_KEY;
 
-        if (!apiKey) {
-            throw new Error("GEMINI_API_KEY is missing");
-        }
+        // 1. 카카오에 "잠시만 기다려 주세요" 응답을 즉시 반환 (5초 타임아웃 방지)
+        res.status(200).json({
+            version: "2.0",
+            useCallback: true // 이 값을 true로 보내면 카카오가 기다려줍니다.
+        });
 
-        let aiText = "죄송합니다. 지금 구글 AI 서버에 접속자가 너무 많아 대답이 지연되고 있습니다. 잠시 후 다시 말씀해 주세요.";
-        let success = false;
-        
-        // 최대 3번까지 재시도하는 안전장치
+        // 2. 백그라운드에서 AI 호출 및 재시도 로직 실행
+        let aiText = "죄송합니다. 지금은 대답을 생성하지 못했습니다.";
         for (let attempt = 1; attempt <= 3; attempt++) {
             try {
                 const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent`, {
                     method: 'POST',
-                    headers: { 
-                        'Content-Type': 'application/json',
-                        'x-goog-api-key': apiKey 
-                    },
+                    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
                     body: JSON.stringify({
                         contents: [{ parts: [{ text: userMessage }] }],
-                        systemInstruction: { parts: [{ text: "당신은 부안군의 AI 비서 '부안척척'입니다. 부안군 주민과 관광객에게 친절하게 답하세요." }] }
+                        systemInstruction: { parts: [{ text: "당신은 부안군의 AI 비서 '부안척척'입니다." }] }
                     })
                 });
-
                 const data = await response.json();
 
-                // 성공적으로 답변을 받은 경우
                 if (data.candidates && data.candidates.length > 0) {
-                    const candidate = data.candidates[0];
-                    if (candidate.content && candidate.content.parts && candidate.content.parts.length > 0) {
-                        aiText = candidate.content.parts[0].text;
-                        success = true;
-                        break; // 성공하면 반복문 탈출
-                    }
-                } 
-                
-                // 서버 과부하(High Demand) 에러인 경우 1초 대기 후 재시도
-                if (data.error && data.error.message.includes("high demand")) {
-                    console.log(`시도 ${attempt}회 실패 (서버 과부하). 1초 후 재시도...`);
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                    continue;
-                } else if (data.error) {
-                    aiText = `구글 에러: ${data.error.message}`;
-                    break;
+                    aiText = data.candidates[0].content.parts[0].text;
+                    break; // 성공 시 반복문 종료
                 }
-            } catch (err) {
-                console.log(`시도 ${attempt}회 통신 에러:`, err);
-                await new Promise(resolve => setTimeout(resolve, 1000));
-            }
+                if (data.error && data.error.message.includes("high demand")) {
+                    await new Promise(r => setTimeout(r, 1000)); // 1초 대기 후 재시도
+                    continue;
+                }
+                if (data.error) { aiText = `구글 에러: ${data.error.message}`; break; }
+            } catch (e) { await new Promise(r => setTimeout(r, 1000)); }
         }
 
-        res.status(200).json({
-            version: "2.0",
-            template: {
-                outputs: [{ simpleText: { text: aiText } }]
-            }
-        });
-
+        // 3. 준비된 답변을 카카오 콜백 주소로 전송
+        if (callbackUrl) {
+            await fetch(callbackUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    version: "2.0",
+                    template: { outputs: [{ simpleText: { text: aiText } }] }
+                })
+            });
+        }
     } catch (error) {
-        console.error("Error details:", error);
-        res.status(200).json({
-            version: "2.0",
-            template: {
-                outputs: [{ simpleText: { text: "죄송합니다. 시스템에 일시적인 오류가 발생했습니다. 잠시 후 다시 시도해 주세요." } }]
-            }
-        });
+        console.error("서버 에러:", error);
+        // 예외 발생 시에도 카카오가 멈추지 않도록 에러 응답이라도 반환
+        res.status(200).json({ version: "2.0", template: { outputs: [{ simpleText: { text: "시스템 오류가 발생했습니다." } }] } });
     }
 }
