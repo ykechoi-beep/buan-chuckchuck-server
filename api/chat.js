@@ -36,7 +36,11 @@ export default async function handler(req, res) {
                         // Groq에서 지원하는 OpenAI 오픈소스 모델 적용
                         model: "openai/gpt-oss-120b", 
                         messages: [
-                            { role: "system", content: "당신은 부안군의 AI 비서 '부안척척'입니다. 부안군 주민과 관광객에게 친절하게 답하세요." },
+                            { 
+                                role: "system", 
+                                // ★ 마크다운 기호를 쓰지 말고 이모지와 줄바꿈만 쓰도록 명령 추가
+                                content: "당신은 부안군의 AI 비서 '부안척척'입니다. 부안군 주민과 관광객에게 친절하게 답하세요. 절대 ###, |, ---, ** 같은 마크다운 기호를 사용하지 말고, 이모지와 줄바꿈만 사용해서 카카오톡 화면에 보기 쉽게 답변하세요." 
+                            },
                             { role: "user", content: userMessage }
                         ],
                         temperature: 0.7
