@@ -23,21 +23,33 @@ export default async function handler(req, res) {
             let databaseContext = "";
 
             try {
-                // 1. Firebase 데이터 불러오기 (1000개)
                 const firebaseProjectId = "buan-chuckchuck"; 
-                const firebaseUrl = `https://firestore.googleapis.com/v1/projects/${firebaseProjectId}/databases/(default)/documents/inventory?pageSize=1000`;
-                const fbResponse = await fetch(firebaseUrl);
-                const fbData = await fbResponse.json();
+                let allDocuments = [];
+                let nextPageToken = null;
+                let pageCount = 0;
 
-                // 2. 사용자의 질문에서 핵심 키워드 추출 (조사 제거)
-                // 예: "집 철거해야 하는데 업체 알아" -> ["철거", "업체"]
-                const stopWords = ["해야", "하는데", "알아", "어디", "있어", "알려줘", "싶어", "해줘", "에서", "으로", "하고"];
-                const keywords = userMessage.split(" ").filter(word => word.length > 0 && !stopWords.includes(word));
+                // ★ [핵심 수정] 모든 데이터를 끝까지 읽어오는 반복문 (최대 3,000건)
+                do {
+                    let url = `https://firestore.googleapis.com/v1/projects/${firebaseProjectId}/databases/(default)/documents/inventory?pageSize=1000`;
+                    if (nextPageToken) url += `&pageToken=${nextPageToken}`;
 
-                if (fbData.documents && fbData.documents.length > 0) {
-                    const matchedDocs = fbData.documents.filter(doc => {
+                    const fbResponse = await fetch(url);
+                    const fbData = await fbResponse.json();
+
+                    if (fbData.documents) {
+                        allDocuments = allDocuments.concat(fbData.documents);
+                    }
+                    nextPageToken = fbData.nextPageToken;
+                    pageCount++;
+                } while (nextPageToken && pageCount < 3); // 최대 3번(3000개)까지 읽기
+
+                // 2. 사용자의 질문에서 핵심 키워드 추출
+                const stopWords = ["해야", "하는데", "알아", "어디", "있어", "알려줘", "싶어", "해줘", "에서", "으로", "하고", "전화번호"];
+                const keywords = userMessage.split(" ").filter(word => word.length > 1 && !stopWords.includes(word));
+
+                if (allDocuments.length > 0) {
+                    const matchedDocs = allDocuments.filter(doc => {
                         const fields = doc.fields;
-                        // 검색 대상 텍스트 (대분류, 중분류, 소분류, 서비스내용, 키워드)
                         const searchString = 
                             (fields.대분류?.stringValue || "") + " " +
                             (fields.중분류?.stringValue || "") + " " +
@@ -45,12 +57,11 @@ export default async function handler(req, res) {
                             (fields.서비스내용?.stringValue || "") + " " +
                             (fields.키워드?.stringValue || "");
                         
-                        // 추출된 핵심 키워드 중 하나라도 데이터에 포함되어 있으면 매칭
                         return keywords.some(word => searchString.includes(word));
                     });
 
-                    // 매칭된 데이터를 프롬프트에 넣을 텍스트로 변환 (최대 15개까지 넉넉하게)
-                    databaseContext = matchedDocs.slice(0, 15).map(doc => {
+                    // 매칭된 데이터가 있으면 최대 20개까지 프롬프트에 넣기
+                    databaseContext = matchedDocs.slice(0, 20).map(doc => {
                         const f = doc.fields;
                         return `[부안 정보] 
                         이름: ${f.소분류?.stringValue}
@@ -64,18 +75,14 @@ export default async function handler(req, res) {
             }
 
             try {
-                // 3. Groq AI 호출 (필터링 강화 프롬프트)
                 const systemPrompt = `당신은 부안군의 AI 비서 '부안척척'입니다. 부안군 주민과 관광객에게 친절하게 답하세요. 절대 ###, |, ---, ** 같은 마크다운 기호를 사용하지 말고, 이모지와 줄바꿈만 사용해서 카카오톡 화면에 보기 쉽게 답변하세요.
 
                 다음은 사용자의 질문과 관련하여 부안군 데이터베이스에서 찾아낸 정보입니다.
                 
-                ★★★ 절대 규칙 (매우 중요):
-                1. 사용자의 질문과 정확히 일치하는 정보만 골라서 대답하세요. 
-                   - 예: 사용자가 '요양원'을 물어보면, 데이터에 '경로당'이 섞여 있어도 '요양원'만 골라서 보여주세요.
-                   - 예: 사용자가 '철거'를 물어보면, '철거' 관련 업체만 보여주세요.
-                2. 제공된 데이터에 없는 구체적인 전화번호, 주소는 절대로 지어내지 마세요.
-                3. 만약 데이터에 질문에 맞는 정확한 정보가 없다면 "죄송합니다. 해당 정보는 현재 데이터베이스에 없습니다. 부안군청(063-580-4000)으로 문의하시면 정확한 안내를 받으실 수 있습니다." 라고 솔직하게 대답하세요.
-                4. 데이터가 있더라도 전화번호가 '번호 없음'이라면 억지로 만들지 말고 "전화번호는 제공되지 않습니다"라고 안내하세요.
+                ★★★ 절대 규칙:
+                1. 사용자의 질문과 정확히 일치하는 정보만 골라서 대답하세요. (예: '요양원'을 물으면 '경로당'은 제외)
+                2. 제공된 데이터에 없는 전화번호, 주소는 절대로 지어내지 마세요.
+                3. 만약 데이터에 질문에 맞는 정확한 정보가 없다면 "죄송합니다. 해당 정보는 현재 데이터베이스에 없습니다." 라고 솔직하게 대답하세요.
 
                 [검색된 부안 데이터]
                 ${databaseContext || "검색된 데이터가 없습니다."}`;
@@ -109,10 +116,8 @@ export default async function handler(req, res) {
                 aiText = "서버 통신 오류가 발생했습니다.";
             }
 
-            // 4. 카카오톡 카드형 UI 전송
             if (callbackUrl) {
                 const safeDescription = aiText.substring(0, 800); 
-
                 await fetch(callbackUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -125,16 +130,8 @@ export default async function handler(req, res) {
                                         title: "부안척척 AI 비서 🤖",
                                         description: safeDescription,
                                         buttons: [
-                                            {
-                                                action: "message",
-                                                label: "🔄 다시 물어보기",
-                                                messageText: "처음으로"
-                                            },
-                                            {
-                                                action: "phone",
-                                                label: "📞 상담원 연결",
-                                                phoneNumber: "063-580-4000"
-                                            }
+                                            { action: "message", label: "🔄 다시 물어보기", messageText: "처음으로" },
+                                            { action: "phone", label: "📞 상담원 연결", phoneNumber: "063-580-4000" }
                                         ]
                                     }
                                 }
