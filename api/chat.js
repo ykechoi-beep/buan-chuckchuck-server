@@ -41,7 +41,6 @@ export default async function handler(req, res) {
                         return userMessage.split(" ").some(word => word.length > 0 && searchString.includes(word));
                     });
 
-                    // 매칭된 데이터가 있으면 프롬프트에 넣을 텍스트로 변환 (최대 5개)
                     databaseContext = matchedDocs.slice(0, 5).map(doc => {
                         const f = doc.fields;
                         return `[부안 정보] 
@@ -76,14 +75,14 @@ export default async function handler(req, res) {
                             { role: "system", content: systemPrompt },
                             { role: "user", content: userMessage }
                         ],
-                        temperature: 0.3 // 정확한 정보 전달을 위해 온도를 낮춤
+                        temperature: 0.3
                     })
                 });
 
                 const data = await response.json();
 
                 if (data.choices?.[0]?.message?.content) {
-                    // ★ AI 답변에서 마크다운 기호(**, ###, ---, |)를 강제로 제거하는 필터
+                    // 마크다운 기호 제거 필터
                     let rawText = data.choices[0].message.content;
                     aiText = rawText.replace(/\*\*/g, '').replace(/###/g, '').replace(/---/g, '').replace(/\|/g, '');
                 } else if (data.error) {
@@ -94,13 +93,38 @@ export default async function handler(req, res) {
                 aiText = "서버 통신 오류가 발생했습니다.";
             }
 
+            // ★ 4. 카카오톡 '카드형(TextCard)' UI로 전송
             if (callbackUrl) {
+                // AI의 답변이 너무 길면 카드 UI가 깨질 수 있으므로 800자로 자름
+                const safeDescription = aiText.substring(0, 800); 
+
                 await fetch(callbackUrl, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         version: "2.0",
-                        template: { outputs: [{ simpleText: { text: aiText } }] }
+                        template: {
+                            outputs: [
+                                {
+                                    textCard: {
+                                        title: "부안척척 AI 비서 🤖",
+                                        description: safeDescription,
+                                        buttons: [
+                                            {
+                                                action: "message",
+                                                label: "🔄 다시 물어보기",
+                                                messageText: "처음으로"
+                                            },
+                                            {
+                                                action: "phone",
+                                                label: "📞 상담원 연결",
+                                                phoneNumber: "063-580-4000" // 부안군청 대표번호 (추후 변경 가능)
+                                            }
+                                        ]
+                                    }
+                                }
+                            ]
+                        }
                     })
                 }).catch(e => console.error("콜백 전송 실패:", e));
             }
