@@ -24,22 +24,20 @@ export default async function handler(req, res) {
 
             try {
                 // 1. Firebase에서 부안 인벤토리 데이터 불러오기
-                const firebaseProjectId = "buan-chuckchuck"; // 본인 프로젝트 ID (다르면 수정하세요)
+                const firebaseProjectId = "buan-chuckchuck"; // 본인 프로젝트 ID 확인
                 const firebaseUrl = `https://firestore.googleapis.com/v1/projects/${firebaseProjectId}/databases/(default)/documents/inventory`;
                 const fbResponse = await fetch(firebaseUrl);
                 const fbData = await fbResponse.json();
 
-                // 2. 사용자의 질문과 관련된 데이터만 필터링 (간이 RAG)
+                // 2. 사용자의 질문과 관련된 데이터만 필터링
                 if (fbData.documents && fbData.documents.length > 0) {
                     const matchedDocs = fbData.documents.filter(doc => {
                         const fields = doc.fields;
-                        // 검색 대상: 소분류, 서비스내용, 키워드
                         const searchString = 
                             (fields.소분류?.stringValue || "") + " " +
                             (fields.서비스내용?.stringValue || "") + " " +
                             (fields.키워드?.stringValue || "");
                         
-                        // 사용자의 질문 단어 중 하나라도 포함되어 있으면 매칭
                         return userMessage.split(" ").some(word => word.length > 0 && searchString.includes(word));
                     });
 
@@ -58,7 +56,7 @@ export default async function handler(req, res) {
             }
 
             try {
-                // 3. Groq AI 호출 (검색된 부안 데이터를 참고하도록 지시)
+                // 3. Groq AI 호출
                 const systemPrompt = `당신은 부안군의 AI 비서 '부안척척'입니다. 부안군 주민과 관광객에게 친절하게 답하세요. 절대 ###, |, ---, ** 같은 마크다운 기호를 사용하지 말고, 이모지와 줄바꿈만 사용해서 카카오톡 화면에 보기 쉽게 답변하세요.
 
                 다음은 사용자의 질문과 관련하여 부안군 데이터베이스에서 찾아낸 정보입니다. 이 정보를 바탕으로 대답하세요. 만약 정보가 없다면 당신의 일반 지식을 활용하되, 모르는 것은 솔직히 모른다고 하세요.
@@ -85,7 +83,9 @@ export default async function handler(req, res) {
                 const data = await response.json();
 
                 if (data.choices?.[0]?.message?.content) {
-                    aiText = data.choices[0].message.content;
+                    // ★ AI 답변에서 마크다운 기호(**, ###, ---, |)를 강제로 제거하는 필터
+                    let rawText = data.choices[0].message.content;
+                    aiText = rawText.replace(/\*\*/g, '').replace(/###/g, '').replace(/---/g, '').replace(/\|/g, '');
                 } else if (data.error) {
                     aiText = `Groq 에러: ${data.error.message}`;
                 }
