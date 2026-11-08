@@ -11,10 +11,13 @@ export default async function handler(req, res) {
             throw new Error("GEMINI_API_KEY is missing");
         }
 
-        // ★ 모델명을 gemini-2.5-flash로 변경했습니다.
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+        // ★ 모델명을 gemini-3.8-flash로 변경하고, 최신 API 호출 방식 적용
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 
+                'Content-Type': 'application/json',
+                'x-goog-api-key': apiKey 
+            },
             body: JSON.stringify({
                 contents: [{ parts: [{ text: userMessage }] }],
                 systemInstruction: { parts: [{ text: "당신은 부안군의 AI 비서 '부안척척'입니다. 부안군 주민과 관광객에게 친절하게 답하세요." }] }
